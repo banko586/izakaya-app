@@ -1,21 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { writeFile, unlink } from 'fs/promises';
-import path from 'path';
+import { supabase } from '@/lib/supabase';
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     try {
         const { id } = await params;
-        const izakaya = await prisma.izakaya.findUnique({
-            where: { id: parseInt(id) },
-            include: {
-                images: true,
-            },
-        });
-        if (!izakaya) {
+
+        const { data, error } = await supabase
+            .from('izakayas')
+            .select('*, izakaya_images(*)')
+            .eq('id', parseInt(id))
+            .single();
+
+        if (error || !data) {
             return NextResponse.json({ error: 'Izakaya not found' }, { status: 404 });
         }
-        return NextResponse.json(izakaya);
+
+        const normalized = {
+            id: data.id,
+            name: data.name,
+            rating: data.rating,
+            genre: data.genre,
+            memo: data.memo,
+            mapUrl: data.map_url,
+            status: data.status,
+            createdAt: data.created_at,
+            updatedAt: data.updated_at,
+            images: (data.izakaya_images ?? []).map((img: any) => ({
+                id: img.id,
+                url: img.url,
+                caption: img.caption,
+                izakayaId: img.izakaya_id,
+                createdAt: img.created_at,
+            })),
+        };
+
+        return NextResponse.json(normalized);
     } catch (error) {
         return NextResponse.json({ error: 'Failed to fetch izakaya' }, { status: 500 });
     }
@@ -24,6 +43,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     try {
         const { id } = await params;
+        const izakayaId = parseInt(id);
         const formData = await request.formData();
         const name = formData.get('name') as string;
         const rating = Number(formData.get('rating'));
@@ -32,11 +52,14 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         const mapUrl = formData.get('mapUrl') as string;
         const status = formData.get('status') as string;
 
-        const existingIzakaya = await prisma.izakaya.findUnique({
-            where: { id: parseInt(id) },
-        });
+        // Check existence
+        const { data: existing, error: existError } = await supabase
+            .from('izakayas')
+            .select('id')
+            .eq('id', izakayaId)
+            .single();
 
-        if (!existingIzakaya) {
+        if (existError || !existing) {
             return NextResponse.json({ error: 'Izakaya not found' }, { status: 404 });
         }
 
@@ -46,34 +69,36 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
             try {
                 const deletedImageIds = JSON.parse(deletedImageIdsStr) as number[];
                 if (deletedImageIds.length > 0) {
-                    // Find images to get file paths
-                    const imagesToDelete = await prisma.izakayaImage.findMany({
-                        where: {
-                            id: { in: deletedImageIds },
-                            izakayaId: parseInt(id) // Security check to ensure ownership
-                        }
-                    });
+                    // Fetch image URLs to delete from Storage
+                    const { data: imagesToDelete } = await supabase
+                        .from('izakaya_images')
+                        .select('id, url')
+                        .in('id', deletedImageIds)
+                        .eq('izakaya_id', izakayaId);
 
-                    // Delete files from filesystem
-                    for (const img of imagesToDelete) {
-                        try {
-                            const imgPath = path.join(process.cwd(), 'public', img.url);
-                            await unlink(imgPath);
-                            console.log(`Deleted file: ${imgPath}`);
-                        } catch (e) {
-                            console.error(`Failed to delete file ${img.url}:`, e);
+                    if (imagesToDelete && imagesToDelete.length > 0) {
+                        // Extract storage paths from public URLs
+                        const storagePaths = imagesToDelete.map((img: any) => {
+                            const urlObj = new URL(img.url);
+                            // Path after /storage/v1/object/public/izakaya-images/
+                            const parts = urlObj.pathname.split('/izakaya-images/');
+                            return parts[1] ?? '';
+                        }).filter(Boolean);
+
+                        if (storagePaths.length > 0) {
+                            await supabase.storage.from('izakaya-images').remove(storagePaths);
                         }
+
+                        // Delete DB records
+                        await supabase
+                            .from('izakaya_images')
+                            .delete()
+                            .in('id', deletedImageIds)
+                            .eq('izakaya_id', izakayaId);
                     }
-
-                    // Delete records from database
-                    await prisma.izakayaImage.deleteMany({
-                        where: {
-                            id: { in: deletedImageIds }
-                        }
-                    });
                 }
             } catch (e) {
-                console.error("Error processing deletedImageIds", e);
+                console.error('Error processing deletedImageIds', e);
             }
         }
 
@@ -83,10 +108,11 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
             try {
                 const existingCaptionsMap = JSON.parse(existingCaptionsStr) as Record<string, string>;
                 const updatePromises = Object.entries(existingCaptionsMap).map(([imgId, caption]) =>
-                    prisma.izakayaImage.updateMany({
-                        where: { id: parseInt(imgId), izakayaId: parseInt(id) },
-                        data: { caption: caption || null },
-                    })
+                    supabase
+                        .from('izakaya_images')
+                        .update({ caption: caption || null })
+                        .eq('id', parseInt(imgId))
+                        .eq('izakaya_id', izakayaId)
                 );
                 await Promise.all(updatePromises);
             } catch (e) {
@@ -94,7 +120,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
             }
         }
 
-        // Handle multiple images (Add new ones)
+        // Handle new image uploads
         const images = formData.getAll('images') as File[];
         const captions = formData.getAll('captions') as string[];
         const uploadedImageData: { url: string; caption: string | null }[] = [];
@@ -104,41 +130,75 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
             const caption = captions[i] || null;
 
             if (image && image.size > 0) {
+                const filename = `${izakayaId}/${Date.now()}-${Math.random().toString(36).substring(7)}-${image.name.replace(/\s/g, '-')}`;
                 const buffer = Buffer.from(await image.arrayBuffer());
-                const filename = `${Date.now()}-${Math.random().toString(36).substring(7)}-${image.name.replace(/\s/g, '-')}`;
-                const uploadDir = path.join(process.cwd(), 'public/uploads');
-                const filepath = path.join(uploadDir, filename);
 
-                await writeFile(filepath, buffer);
-                uploadedImageData.push({
-                    url: `/uploads/${filename}`,
-                    caption: caption
-                });
+                const { error: uploadError } = await supabase.storage
+                    .from('izakaya-images')
+                    .upload(filename, buffer, { contentType: image.type, upsert: false });
+
+                if (uploadError) {
+                    console.error('Image upload error:', uploadError);
+                    continue;
+                }
+
+                const { data: publicUrlData } = supabase.storage
+                    .from('izakaya-images')
+                    .getPublicUrl(filename);
+
+                uploadedImageData.push({ url: publicUrlData.publicUrl, caption });
             }
         }
 
-        const updatedIzakaya = await prisma.izakaya.update({
-            where: { id: parseInt(id) },
-            data: {
-                name,
-                rating,
-                genre,
-                memo,
-                mapUrl,
-                status,
-                images: {
-                    create: uploadedImageData.map(img => ({
-                        url: img.url,
-                        caption: img.caption
-                    })),
-                },
-            },
-            include: {
-                images: true,
-            }
-        });
+        if (uploadedImageData.length > 0) {
+            const { error: imgInsertError } = await supabase
+                .from('izakaya_images')
+                .insert(uploadedImageData.map(img => ({
+                    izakaya_id: izakayaId,
+                    url: img.url,
+                    caption: img.caption,
+                })));
 
-        return NextResponse.json(updatedIzakaya);
+            if (imgInsertError) throw imgInsertError;
+        }
+
+        // Update izakaya main record
+        const { error: updateError } = await supabase
+            .from('izakayas')
+            .update({ name, rating, genre, memo, map_url: mapUrl, status })
+            .eq('id', izakayaId);
+
+        if (updateError) throw updateError;
+
+        // Fetch final record
+        const { data: finalData, error: finalError } = await supabase
+            .from('izakayas')
+            .select('*, izakaya_images(*)')
+            .eq('id', izakayaId)
+            .single();
+
+        if (finalError) throw finalError;
+
+        const normalized = {
+            id: finalData.id,
+            name: finalData.name,
+            rating: finalData.rating,
+            genre: finalData.genre,
+            memo: finalData.memo,
+            mapUrl: finalData.map_url,
+            status: finalData.status,
+            createdAt: finalData.created_at,
+            updatedAt: finalData.updated_at,
+            images: (finalData.izakaya_images ?? []).map((img: any) => ({
+                id: img.id,
+                url: img.url,
+                caption: img.caption,
+                izakayaId: img.izakaya_id,
+                createdAt: img.created_at,
+            })),
+        };
+
+        return NextResponse.json(normalized);
     } catch (error) {
         console.error('Error updating izakaya:', error);
         return NextResponse.json({ error: 'Failed to update izakaya' }, { status: 500 });
@@ -148,31 +208,33 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     try {
         const { id } = await params;
-        const izakaya = await prisma.izakaya.findUnique({
-            where: { id: parseInt(id) },
-            include: { images: true }
-        });
+        const izakayaId = parseInt(id);
 
-        if (!izakaya) {
-            return NextResponse.json({ error: 'Izakaya not found' }, { status: 404 });
-        }
+        // Fetch images to delete from Storage
+        const { data: images } = await supabase
+            .from('izakaya_images')
+            .select('id, url')
+            .eq('izakaya_id', izakayaId);
 
-        // Delete associated files
-        // 1. Legacy imagePath cleanup removed as field is deleted from schema
+        if (images && images.length > 0) {
+            const storagePaths = images.map((img: any) => {
+                const urlObj = new URL(img.url);
+                const parts = urlObj.pathname.split('/izakaya-images/');
+                return parts[1] ?? '';
+            }).filter(Boolean);
 
-        // 2. Delete new images
-        for (const img of izakaya.images) {
-            try {
-                const imgPath = path.join(process.cwd(), 'public', img.url);
-                await unlink(imgPath);
-            } catch (e) {
-                console.log('Error deleting image file', img.url, e);
+            if (storagePaths.length > 0) {
+                await supabase.storage.from('izakaya-images').remove(storagePaths);
             }
         }
 
-        await prisma.izakaya.delete({
-            where: { id: parseInt(id) },
-        });
+        // Delete izakaya (CASCADE will handle izakaya_images DB records)
+        const { error } = await supabase
+            .from('izakayas')
+            .delete()
+            .eq('id', izakayaId);
+
+        if (error) throw error;
 
         return NextResponse.json({ message: 'Deleted successfully' });
     } catch (error) {

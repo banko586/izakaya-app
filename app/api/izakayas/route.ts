@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { writeFile } from 'fs/promises';
-import path from 'path';
+import { supabase } from '@/lib/supabase';
 
 export async function GET(request: NextRequest) {
     try {
@@ -10,26 +8,46 @@ export async function GET(request: NextRequest) {
         const genre = searchParams.get('genre');
         const status = searchParams.get('status');
 
-        const where: any = {};
+        let query = supabase
+            .from('izakayas')
+            .select('*, izakaya_images(*)')
+            .order('created_at', { ascending: false });
 
         if (q) {
-            where.name = { contains: q };
+            query = query.ilike('name', `%${q}%`);
         }
         if (genre && genre !== 'All') {
-            where.genre = genre;
+            query = query.eq('genre', genre);
         }
         if (status && status !== 'All') {
-            where.status = status;
+            query = query.eq('status', status);
         }
 
-        const izakayas = await prisma.izakaya.findMany({
-            where,
-            include: {
-                images: true, // Include related images
-            },
-            orderBy: { createdAt: 'desc' },
-        });
-        return NextResponse.json(izakayas);
+        const { data, error } = await query;
+
+        if (error) throw error;
+
+        // Normalize response to match existing frontend expectations
+        const normalized = (data ?? []).map((row: any) => ({
+            id: row.id,
+            name: row.name,
+            rating: row.rating,
+            genre: row.genre,
+            memo: row.memo,
+            mapUrl: row.map_url,
+            status: row.status,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            images: (row.izakaya_images ?? []).map((img: any) => ({
+                id: img.id,
+                url: img.url,
+                caption: img.caption,
+                izakayaId: img.izakaya_id,
+                createdAt: img.created_at,
+            })),
+        }));
+
+        return NextResponse.json(normalized);
     } catch (error) {
         console.error('Error fetching izakayas:', error);
         return NextResponse.json({ error: 'Failed to fetch izakayas' }, { status: 500 });
@@ -46,13 +64,20 @@ export async function POST(request: NextRequest) {
         const mapUrl = formData.get('mapUrl') as string;
         const status = formData.get('status') as string || 'VISITED';
 
-        // Handle multiple images and captions
-        // We expect captions to be sent as 'captions' fields in the same order as 'images'
-        // OR as a JSON string if that's easier for the frontend. 
-        // Let's assume the frontend sends 'captions' as an array of strings corresponding to 'images'.
         const images = formData.getAll('images') as File[];
         const captions = formData.getAll('captions') as string[];
 
+        // 1. Insert izakaya record
+        const { data: izakayaData, error: izakayaError } = await supabase
+            .from('izakayas')
+            .insert({ name, rating, genre, memo, map_url: mapUrl, status })
+            .select()
+            .single();
+
+        if (izakayaError) throw izakayaError;
+        const izakayaId = izakayaData.id;
+
+        // 2. Upload images to Supabase Storage and insert image records
         const uploadedImageData: { url: string; caption: string | null }[] = [];
 
         for (let i = 0; i < images.length; i++) {
@@ -60,40 +85,67 @@ export async function POST(request: NextRequest) {
             const caption = captions[i] || null;
 
             if (image && image.size > 0) {
+                const filename = `${izakayaId}/${Date.now()}-${Math.random().toString(36).substring(7)}-${image.name.replace(/\s/g, '-')}`;
                 const buffer = Buffer.from(await image.arrayBuffer());
-                const filename = `${Date.now()}-${Math.random().toString(36).substring(7)}-${image.name.replace(/\s/g, '-')}`;
-                const uploadDir = path.join(process.cwd(), 'public/uploads');
-                const filepath = path.join(uploadDir, filename);
 
-                await writeFile(filepath, buffer);
-                uploadedImageData.push({
-                    url: `/uploads/${filename}`,
-                    caption: caption
-                });
+                const { error: uploadError } = await supabase.storage
+                    .from('izakaya-images')
+                    .upload(filename, buffer, { contentType: image.type, upsert: false });
+
+                if (uploadError) {
+                    console.error('Image upload error:', uploadError);
+                    continue;
+                }
+
+                const { data: publicUrlData } = supabase.storage
+                    .from('izakaya-images')
+                    .getPublicUrl(filename);
+
+                uploadedImageData.push({ url: publicUrlData.publicUrl, caption });
             }
         }
 
-        const newIzakaya = await prisma.izakaya.create({
-            data: {
-                name,
-                rating,
-                genre,
-                memo,
-                mapUrl,
-                status,
-                images: {
-                    create: uploadedImageData.map(img => ({
-                        url: img.url,
-                        caption: img.caption
-                    })),
-                },
-            },
-            include: {
-                images: true,
-            }
-        });
+        if (uploadedImageData.length > 0) {
+            const { error: imgInsertError } = await supabase
+                .from('izakaya_images')
+                .insert(uploadedImageData.map(img => ({
+                    izakaya_id: izakayaId,
+                    url: img.url,
+                    caption: img.caption,
+                })));
 
-        return NextResponse.json(newIzakaya, { status: 201 });
+            if (imgInsertError) throw imgInsertError;
+        }
+
+        // 3. Fetch final record with images
+        const { data: finalData, error: finalError } = await supabase
+            .from('izakayas')
+            .select('*, izakaya_images(*)')
+            .eq('id', izakayaId)
+            .single();
+
+        if (finalError) throw finalError;
+
+        const normalized = {
+            id: finalData.id,
+            name: finalData.name,
+            rating: finalData.rating,
+            genre: finalData.genre,
+            memo: finalData.memo,
+            mapUrl: finalData.map_url,
+            status: finalData.status,
+            createdAt: finalData.created_at,
+            updatedAt: finalData.updated_at,
+            images: (finalData.izakaya_images ?? []).map((img: any) => ({
+                id: img.id,
+                url: img.url,
+                caption: img.caption,
+                izakayaId: img.izakaya_id,
+                createdAt: img.created_at,
+            })),
+        };
+
+        return NextResponse.json(normalized, { status: 201 });
     } catch (error) {
         console.error('Error creating izakaya:', error);
         return NextResponse.json({ error: 'Failed to create izakaya' }, { status: 500 });
