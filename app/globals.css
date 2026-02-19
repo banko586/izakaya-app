@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+
+  /* Custom Japanese Izakaya Theme Colors */
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-border: var(--border);
+}
+
+:root {
+  /* Modern Japanese Izakaya Theme - Light Mode */
+  /* Background: Subtle off-white/washi tone */
+  --background: #fcfbf9;
+  /* Very light warm gray */
+
+  /* Foreground: Soft charcoal inc. sumi ink */
+  --foreground: #2d2a26;
+
+  /* Primary: Deep Indigo (Kachi-iro) */
+  --primary: #1e3a8a;
+  /* Indigo-900 */
+  --primary-foreground: #ffffff;
+
+  /* Secondary: Gold/Mustard (Yamabuki-iro) for accents */
+  --secondary: #d97706;
+  /* Amber-600 */
+  --secondary-foreground: #ffffff;
+
+  /* Muted: Soft grays/beiges */
+  --muted: #f5f5f4;
+  /* Stone-100 */
+  --muted-foreground: #78716c;
+  /* Stone-500 */
+
+  /* Card: White but slightly warm */
+  --card: #ffffff;
+  --card-foreground: #2d2a26;
+
+  /* Border: Subtle stone */
+  --border: #e7e5e4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Modern Japanese Izakaya Theme - Dark Mode */
+    /* Background: Deep charcoal / Dark wood */
+    --background: #1c1917;
+    /* Stone-900 */
+    --foreground: #e7e5e4;
+    /* Stone-200 */
+
+    /* Primary: Lighter Indigo / Blue-grey */
+    --primary: #6366f1;
+    /* Indigo-500 */
+    --primary-foreground: #ffffff;
+
+    /* Secondary: Muted Gold */
+    --secondary: #b45309;
+    /* Amber-700 */
+    --secondary-foreground: #ffffff;
+
+    /* Muted: Dark stone */
+    --muted: #292524;
+    /* Stone-800 */
+    --muted-foreground: #a8a29e;
+    /* Stone-400 */
+
+    --card: #292524;
+    /* Stone-800 also works for cards in dark mode */
+    --card-foreground: #e7e5e4;
+
+    --border: #44403c;
+  }
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), sans-serif;
+
+  /* Washi Paper Texture Effect using SVG Noise */
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
+  background-attachment: fixed;
+  /* Keep texture static while scrolling */
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    /* Lower opacity for dark mode to avoid looking too grainy */
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+  }
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-serif), serif;
+  letter-spacing: -0.025em;
+}

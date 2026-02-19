@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Izakaya {
+  id          Int            @id @default(autoincrement())
+  name        String
+  rating      Int            // 1-5 scale
+  genre       String         // e.g., Yakitori, Seafood
+  memo        String?        // Free text notes
+  mapUrl      String?        // Google Maps link
+  status      String         @default("VISITED") // VISITED, WANT_TO_GO
+  images      IzakayaImage[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  // Deprecated: imagePath String? - migrated to IzakayaImage
+}
+
+model IzakayaImage {
+  id         Int      @id @default(autoincrement())
+  url        String
+  caption    String?  // Image caption/description
+  izakayaId  Int
+  izakaya    Izakaya  @relation(fields: [izakayaId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+}
