@@ -3,9 +3,25 @@
 import IzakayaForm from '@/components/IzakayaForm';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Izakaya, IzakayaImage } from '@prisma/client';
 
-type IzakayaWithImages = Izakaya & { images: IzakayaImage[] };
+type IzakayaImage = {
+    id: number;
+    url: string;
+    caption: string | null;
+    izakayaId: number;
+    createdAt: string;
+};
+
+type IzakayaWithImages = {
+    id: number;
+    name: string;
+    rating: number;
+    genre: string;
+    memo: string | null;
+    mapUrl: string | null;
+    status: string;
+    images: IzakayaImage[];
+};
 
 export default function EditIzakayaFormClient({ izakaya }: { izakaya: IzakayaWithImages }) {
     const router = useRouter();

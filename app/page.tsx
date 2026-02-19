@@ -1,8 +1,8 @@
-import prisma from '@/lib/prisma';
 import IzakayaCard from '@/components/IzakayaCard';
 import Link from 'next/link';
 import { PlusCircle } from 'lucide-react';
 import SearchFilter from '@/components/SearchFilter';
+import { supabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,24 +16,32 @@ export default async function Home(props: PageProps) {
   const genre = typeof searchParams.genre === 'string' && searchParams.genre !== 'All' ? searchParams.genre : undefined;
   const status = typeof searchParams.status === 'string' && searchParams.status !== 'All' ? searchParams.status : undefined;
 
-  const where: any = {};
-  if (q) {
-    where.name = { contains: q };
-  }
-  if (genre) {
-    where.genre = genre;
-  }
-  if (status) {
-    where.status = status;
-  }
+  let query = supabase
+    .from('izakayas')
+    .select('*, izakaya_images(*)')
+    .order('created_at', { ascending: false });
 
-  const izakayas = await prisma.izakaya.findMany({
-    where,
-    include: {
-      images: true,
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  if (q) query = query.ilike('name', `%${q}%`);
+  if (genre) query = query.eq('genre', genre);
+  if (status) query = query.eq('status', status);
+
+  const { data, error } = await query;
+
+  const izakayas = (data ?? []).map((row: any) => ({
+    id: row.id,
+    name: row.name,
+    rating: row.rating,
+    genre: row.genre,
+    mapUrl: row.map_url,
+    status: row.status,
+    images: (row.izakaya_images ?? []).map((img: any) => ({
+      id: img.id,
+      url: img.url,
+      caption: img.caption,
+      izakayaId: img.izakaya_id,
+      createdAt: img.created_at,
+    })),
+  }));
 
   return (
     <div className="space-y-8">

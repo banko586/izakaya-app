@@ -1,6 +1,6 @@
-import prisma from '@/lib/prisma';
 import EditIzakayaFormClient from './EditIzakayaFormClient';
 import { notFound } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 
 interface PageProps {
     params: Promise<{ id: string }>;
@@ -8,16 +8,33 @@ interface PageProps {
 
 export default async function EditIzakayaPage({ params }: PageProps) {
     const { id } = await params;
-    const izakaya = await prisma.izakaya.findUnique({
-        where: { id: parseInt(id) },
-        include: {
-            images: true,
-        },
-    });
 
-    if (!izakaya) {
+    const { data, error } = await supabase
+        .from('izakayas')
+        .select('*, izakaya_images(*)')
+        .eq('id', parseInt(id))
+        .single();
+
+    if (error || !data) {
         notFound();
     }
+
+    const izakaya = {
+        id: data.id,
+        name: data.name,
+        rating: data.rating,
+        genre: data.genre,
+        memo: data.memo ?? null,
+        mapUrl: data.map_url ?? null,
+        status: data.status,
+        images: (data.izakaya_images ?? []).map((img: any) => ({
+            id: img.id,
+            url: img.url,
+            caption: img.caption ?? null,
+            izakayaId: img.izakaya_id,
+            createdAt: img.created_at,
+        })),
+    };
 
     return (
         <div className="max-w-2xl mx-auto">

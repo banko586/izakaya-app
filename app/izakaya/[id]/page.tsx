@@ -1,10 +1,10 @@
-import prisma from '@/lib/prisma';
 import Link from 'next/link';
 import Image from 'next/image';
 import { notFound } from 'next/navigation';
 import StarRating from '@/components/StarRating';
 import { MapPin, ArrowLeft, Edit, CheckCircle, Bookmark } from 'lucide-react';
 import DeleteButton from './DeleteButton';
+import { supabase } from '@/lib/supabase';
 
 interface PageProps {
     params: Promise<{ id: string }>;
@@ -12,20 +12,34 @@ interface PageProps {
 
 export default async function IzakayaDetailPage({ params }: PageProps) {
     const { id } = await params;
-    const izakaya = await prisma.izakaya.findUnique({
-        where: { id: parseInt(id) },
-        include: {
-            images: true,
-        },
-    });
 
-    if (!izakaya) {
+    const { data, error } = await supabase
+        .from('izakayas')
+        .select('*, izakaya_images(*)')
+        .eq('id', parseInt(id))
+        .single();
+
+    if (error || !data) {
         notFound();
     }
 
+    const izakaya = {
+        id: data.id,
+        name: data.name,
+        rating: data.rating,
+        genre: data.genre,
+        memo: data.memo,
+        mapUrl: data.map_url,
+        status: data.status,
+        images: (data.izakaya_images ?? []).map((img: any) => ({
+            id: img.id,
+            url: img.url,
+            caption: img.caption,
+        })),
+    };
+
     // Collect all images for gallery
-    // Collect all images for gallery
-    const uniqueImages = izakaya.images.map((img: any) => ({
+    const uniqueImages = izakaya.images.map((img: { url: string; caption: string | null }) => ({
         url: img.url,
         caption: img.caption
     }));
@@ -101,7 +115,7 @@ export default async function IzakayaDetailPage({ params }: PageProps) {
                         <div className="space-y-4">
                             <h3 className="font-semibold text-xl">ギャラリー</h3>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                                {galleryImages.map((img, idx) => (
+                                {galleryImages.map((img: { url: string; caption: string | null }, idx: number) => (
                                     <div key={idx} className="space-y-2">
                                         <div className="relative aspect-video rounded-xl overflow-hidden cursor-pointer hover:opacity-95 transition-opacity shadow-sm">
                                             <Image
